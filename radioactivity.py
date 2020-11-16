@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 import torch
+from scipy.optimize import curve_fit
 
 eps_ratio = 1.19
 bi_l = np.log(2)/(19.71*60)
@@ -61,7 +62,6 @@ def long_term_products():
             break
 
     average_bcount = 10.6108108108108
-    print("Columns: {}".format(df.columns))
     x = np.array(df['time'].values.tolist()[break_index:])
     x = np.expand_dims(x, 1)
     y = np.array(df['count'].values.tolist()[break_index:])-average_bcount
@@ -75,6 +75,11 @@ def long_term_products():
     y = np.squeeze(y)
     y_std = np.sqrt(np.sum(np.square(y-np.mean(y))/(x.shape[0]-1)))
 
+    delta = x.shape[0] * np.sum(np.square(x)) - np.square(np.sum(x))
+    print("Delta: {}".format(delta))
+    var_y = np.sum(np.square(y - (m * x + b))) / (x.shape[0] - 2)
+    var_s = x.shape[0] * var_y / delta
+    print("Std of s: {}".format(np.sqrt(var_s)))
     print("b: {} m: {}".format(b, m))
     print("Chi squared: {}".format(np.sum(np.square((y-(m*x+b))/y_std))))
 
@@ -108,11 +113,21 @@ def find_model_params(epochs=5000, batch_size=16):
     # We don't subtract average_bcount as the background noise should be accounted for in the linear model
     y = plot_y-(x*opt_m+opt_b)
 
-    x = np.expand_dims(x, 1)
-    y = np.expand_dims(y, 1)
-    device = torch.device("cuda:0")
+    #x = np.expand_dims(x, 1)
+    #y = np.expand_dims(y, 1)
+    #device = torch.device("cuda:0")
+    #plt.scatter(x, y, s=3)
+    popt, pcov = curve_fit(model, x, y, p0=[8.61447993*(10**-4), 1.12693599*(10**5)], maxfev=5000)
 
-    # Code for gradient descent
+    print("Parameters: {}".format(popt))
+    print("Covariance: {}".format(pcov))
+    y_std = np.sqrt(np.sum(np.square(y - np.mean(y)) / (x.shape[0] - 1)))
+    print("Chi squared: {}".format(np.sum(np.square((y - model(x, popt[0], popt[1])) / y_std))))
+    graph_error(x, y, model, [popt[0], popt[1]])
+    graph_residual(x, y, model(x, popt[0], popt[1]))
+
+    # Code for gradient descent - alternate method that was skipped due to uncertainty of parameters
+    '''
     dtype = torch.float
     input = torch.from_numpy(x).double().to(device)
     label = torch.from_numpy(y).double().to(device)
@@ -154,13 +169,14 @@ def find_model_params(epochs=5000, batch_size=16):
     plt.ylabel("Counts (per 20 seconds)")
     plt.legend("Dataset", "Regression plot")
     plt.show()
+    '''
 
 def model(x, Ainit, R):
     # Note: Optimized values:
     # Ainit = 15.0357, R = 14.1844
     # Ainit = 15.643596747491209, R = 12.690181063858889 (Noise corrected)
     # Full Data (using linear model for correction)
-    # Ainit = 3.8064464923782184, R = 13.73394018773772
+    # Ainit = 8.61447993*(10**-4), R = 1.12693599*(10**5)
     t1 = (1 + eps_ratio * (bi_l / (bi_l - pb_l))) * np.exp(-pb_l * x)
     t2 = eps_ratio * (R - (bi_l / (bi_l - pb_l))) * np.exp(-bi_l * x)
     y_pred = (t1 + t2)*Ainit
@@ -185,9 +201,9 @@ def comparison():
     opt_b = 112.98577
     plot_x = np.array(df['time'].values.tolist())
     plot_y = np.array(df['count'].values.tolist())
-    plt.scatter(plot_y, combined_model(plot_x, 3.8064464923782184, 13.73394018773772), s=3)
+    plt.scatter(plot_y, combined_model(plot_x, 8.61447993*(10**-4), 1.12693599*(10**5)), s=3)
 
-    plot_model = np.expand_dims(combined_model(plot_x, 3.8064464923782184, 13.73394018773772), 1)
+    plot_model = np.expand_dims(combined_model(plot_x, 8.61447993*(10**-4), 1.12693599*(10**5)), 1)
     plot_data = np.expand_dims(plot_y, 1)
     reg = LinearRegression(fit_intercept=False).fit(plot_data, plot_model)
     m = np.squeeze(reg.coef_)
@@ -200,7 +216,7 @@ def comparison():
     print("Variance: {}".format(var_y))
     print("Sum of MSE: {}".format(np.sum(np.square(plot_model-(m*plot_y)))))
 
-    #plt.plot(plot_x, combined_model(plot_x, 3.8064464923782184, 13.73394018773772), label='Model', c='orange')
+    #plt.plot(plot_x, combined_model(plot_x, 8.61447993*(10**-4), 1.12693599*(10**5)), label='Model', c='orange')
     plt.legend(loc='upper right')
     plt.xlabel("Counts (per 20 seconds) - Data")
     plt.ylabel("Counts (per 20 seconds) - Model")
@@ -219,18 +235,17 @@ def display():
             break
     x = np.array(df['time'].values.tolist())
     y = np.array(df['count'].values.tolist())
-
     average_bcount = 10.6108108108108
     opt_m = -0.012000306389773823
     opt_b = 112.98577
-    y = y - (opt_m*x+opt_b)
+    y = y #- (opt_m*x+opt_b)
     plot_x = np.array(df['time'].values.tolist())
     plot_y = np.array(df['count'].values.tolist())
     y_std = np.sqrt(np.sum(np.square(y-np.mean(y))/(x.shape[0]-1)))
-    print("Chi squared: {}".format(np.sum(np.square((y-model(plot_x, 3.8064464923782184, 13.73394018773772))/y_std))))
+    print("Chi squared: {}".format(np.sum(np.square((y-combined_model(plot_x, 8.61447993*(10**-4), 1.12693599*(10**5)))/y_std))))
 
-    graph_error(x, y, model, [3.8064464923782184, 13.73394018773772])
-    graph_residual(x, y, model(plot_x, 3.8064464923782184, 13.73394018773772))
+    graph_error(x, y, combined_model, [8.61447993*(10**-4), 1.12693599*(10**5)])
+    graph_residual(x, y, combined_model(plot_x, 8.61447993*(10**-4), 1.12693599*(10**5)))
 
 def graph_residual(x, label, y_model):
     x = np.expand_dims(x, 1)
@@ -264,7 +279,6 @@ def graph_error(x, y, y_model, model_args):
     plt.show()
 
 if __name__ == '__main__':
-    comparison()
-
+    long_term_products()
 
 
